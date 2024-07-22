@@ -24,6 +24,18 @@ class KnacklyAPI:
         r = requests.post(url, data=payload)
         return r.json()["token"]
 
+    def get_available_catalogs(self) -> list[dict]:
+        """Lists the catalogs available to the api key.
+
+        Returns:
+            list[dict]: A list of catalog dictionaries containing metadata about each catalog.
+        """
+        url = f"{self.base_url}/catalogs"
+        response = requests.get(url, headers=self.authorization_header)
+
+        response.raise_for_status()
+        return response.json()
+
     def get_records_in_catalog(
         self,
         catalog: str,
