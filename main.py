@@ -22,6 +22,12 @@ def main():
     print(type(x))
     print(len(x))
 
+    x = knackly.get_available_catalogs()
+    print(type(x))
+    print(len(x))
+    print(x[0])
+    print(type(x[0]))
+
 
 if __name__ == "__main__":
     main()
