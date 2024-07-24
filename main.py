@@ -2,6 +2,7 @@ import os
 
 from dotenv import load_dotenv
 from pymongo import MongoClient
+from tqdm import tqdm
 
 from knackly_api import KnacklyAPI
 
@@ -9,24 +10,11 @@ from knackly_api import KnacklyAPI
 def main():
     load_dotenv()
 
-    # knackly = KnacklyAPI(
-    #     key_id=os.getenv("KEY"),
-    #     secret=os.getenv("SECRET"),
-    #     tenancy=os.getenv("TENANCY"),
-    # )
-
-    # last_modified = {"c": "after", "v": "2024-07-17T00:00"}
-    # x = knackly.get_records_in_catalog(
-    #     catalog="Transactional", last_modified=last_modified, limit=3, status="Ok"
-    # )
-    # print(type(x))
-    # print(len(x))
-
-    # x = knackly.get_available_catalogs()
-    # print(type(x))
-    # print(len(x))
-    # print(x[0])
-    # print(type(x[0]))
+    knackly = KnacklyAPI(
+        key_id=os.getenv("KEY"),
+        secret=os.getenv("SECRET"),
+        tenancy=os.getenv("TENANCY"),
+    )
 
     mongo_user = os.getenv("MONGO_USER")
     mongo_pass = os.getenv("MONGO_PASSWORD")
@@ -37,19 +25,69 @@ def main():
     )
     print("finished connecting")
     print()
-
     db = client["LightningDocs"]
     collection = db["Records"]
 
-    ids_to_check = ["662a7f630cb5c188", "662a7630cba1df2", "123"]
+    catalog_objects = knackly.get_available_catalogs()
+    catalogs = [c["name"] for c in catalog_objects if "name" in c]
 
-    print("finding")
-    matching_documents = collection.find({"id": {"$in": ids_to_check}}, {"id": 1})
-    print("finished finding")
+    for idx, c in enumerate(catalogs):
+        if idx == 3:
+            # break
+            pass
 
-    matching_ids = [doc["id"] for doc in matching_documents]
-    print("Matching IDs:", matching_ids)
-    print("Matching documents:", matching_documents)
+        records = knackly.get_records_in_catalog(
+            catalog=c,
+            status="Ok",
+            limit=1000,
+            last_modified={"c": "after", "v": "2024-07-01T00:00"},
+        )
+
+        # Break out of this iteration if there weren't any records found matching the various filters.
+        if len(records) == 0:
+            # print(f"{len(records)} records were found for {c} catalog, so skipping...")
+            continue
+
+        record_ids = [r["id"] for r in records if "id" in r]
+        # print(record_ids)
+        # print(
+        #     f"{idx}. total records found in the {c} catalog: {len(record_ids)}. ",
+        #     end="",
+        # )
+        matching_docs = collection.find({"id": {"$in": record_ids}}, {"id": 1})
+        matching_ids = {
+            document["id"] for document in matching_docs if "id" in document
+        }  # This is a 'set' data structure.
+
+        record_ids_set = set(record_ids)
+
+        non_matching_ids = record_ids_set - matching_ids
+        if len(non_matching_ids) == 0:
+            continue
+
+        print(
+            f"{idx}. total records found in the {c} catalog: {len(record_ids)}. ",
+            end="",
+        )
+        # print("Matching ids:", len(matching_ids))
+        print("Non-matching ids:", len(non_matching_ids))
+
+    # last_modified = {"c": "after", "v": "2024-07-17T00:00"}
+    # x = knackly.get_records_in_catalog(
+    #     catalog="Transactional", last_modified=last_modified, limit=3, status="Ok"
+    # )
+    # print(type(x))
+    # print(len(x))
+
+    # ids_to_check = ["662a7f630cb5c188", "662a7630cba1df2", "123"]
+
+    # print("finding")
+    # matching_documents = collection.find({"id": {"$in": ids_to_check}}, {"id": 1})
+    # print("finished finding")
+
+    # matching_ids = [doc["id"] for doc in matching_documents]
+    # print("Matching IDs:", matching_ids)
+    # print("Matching documents:", matching_documents)
 
 
 if __name__ == "__main__":
