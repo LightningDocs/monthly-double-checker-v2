@@ -1,4 +1,6 @@
 import os
+import argparse
+from datetime import datetime, timedelta, UTC
 
 from dotenv import load_dotenv
 from pymongo import MongoClient
@@ -7,7 +9,43 @@ from tqdm import tqdm
 from knackly_api import KnacklyAPI
 
 
-def main():
+def parse_arguments() -> argparse.Namespace:
+    """Helper function to parse command line arguments cleanly
+
+    Returns:
+        argparse.Namespace: Namespace object that should contain the `.exclude` property
+    """
+
+    def init_argparse() -> argparse.ArgumentParser:
+        parser = argparse.ArgumentParser()
+        parser.add_argument(
+            "-d",
+            "--date",
+            help="specify a date in the format `YYYY-MM-DD`. Any records with a lastModified date greater than this date will be ignored.",
+        )
+        return parser
+
+    parser = init_argparse()
+    args = parser.parse_args()
+
+    # Validate that cutoff is a valid date in the format YYYY-MM-DD.
+    if args.date:
+        try:
+            args.date = datetime.strptime(args.date, "%Y-%m-%d")
+        except ValueError:
+            parser.error(
+                f"please ensure that the date is in the format YYYY-MM-DD. received: {args.date}"
+            )
+    else:
+        today = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+        first_of_the_month = today.replace(day=1)
+        first_of_last_month = (first_of_the_month - timedelta(days=1)).replace(day=1)
+        args.date = first_of_last_month
+
+    return args
+
+
+def main(args: argparse.Namespace):
     load_dotenv()
 
     knackly = KnacklyAPI(
@@ -91,4 +129,5 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    args = parse_arguments()
+    main(args)
