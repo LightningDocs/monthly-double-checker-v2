@@ -21,14 +21,14 @@ def parse_arguments() -> argparse.Namespace:
         parser.add_argument(
             "-d",
             "--date",
-            help="specify a date in the format `YYYY-MM-DD`. Any records with a lastModified date greater than this date will be ignored.",
+            help="specify a date in the format `YYYY-MM-DD`. Any records with a lastModified date greater than this date will be what is searched. Defaults to the first of the previous month.",
         )
         return parser
 
     parser = init_argparse()
     args = parser.parse_args()
 
-    # Validate that cutoff is a valid date in the format YYYY-MM-DD.
+    # Validate that args.date is in the format YYYY-MM-DD.
     if args.date:
         try:
             args.date = datetime.strptime(args.date, "%Y-%m-%d")
@@ -41,6 +41,9 @@ def parse_arguments() -> argparse.Namespace:
         first_of_the_month = today.replace(day=1)
         first_of_last_month = (first_of_the_month - timedelta(days=1)).replace(day=1)
         args.date = first_of_last_month
+
+    # Once args.date is validated, convert it back into a string
+    args.date = datetime.strftime(args.date, "%Y-%m-%d")
 
     return args
 
@@ -78,7 +81,7 @@ def main(args: argparse.Namespace):
             catalog=c,
             status="Ok",
             limit=1000,
-            last_modified={"c": "after", "v": "2024-07-01T00:00"},
+            last_modified={"c": "after", "v": f"{args.date}T00:00"},
         )
 
         # Break out of this iteration if there weren't any records found matching the various filters.
@@ -87,11 +90,6 @@ def main(args: argparse.Namespace):
             continue
 
         record_ids = [r["id"] for r in records if "id" in r]
-        # print(record_ids)
-        # print(
-        #     f"{idx}. total records found in the {c} catalog: {len(record_ids)}. ",
-        #     end="",
-        # )
         matching_docs = collection.find({"id": {"$in": record_ids}}, {"id": 1})
         matching_ids = {
             document["id"] for document in matching_docs if "id" in document
