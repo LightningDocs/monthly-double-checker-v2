@@ -7,6 +7,7 @@ from pymongo import MongoClient
 from tqdm import tqdm
 
 from knackly_api import KnacklyAPI
+from logger import initialize_logger
 
 
 def parse_arguments() -> argparse.Namespace:
@@ -75,6 +76,7 @@ def format_document(record_details: dict, catalog: str) -> dict:
 
 
 def main(args: argparse.Namespace):
+    log = initialize_logger()
     # Setup API credentials
     load_dotenv()
     knackly = KnacklyAPI(
@@ -97,7 +99,9 @@ def main(args: argparse.Namespace):
 
     # Build a dictionary consisting of the key:value pairs record_id:catalog
     record_id_map = {}
-    for idx, c in enumerate(catalogs):
+    pbar = tqdm(enumerate(catalogs))
+    for idx, c in pbar:
+        pbar.set_description(str(c).ljust(15))
         if idx == 3:
             # break
             pass
@@ -123,20 +127,26 @@ def main(args: argparse.Namespace):
     matching_ids = {document["id"] for document in matching_docs if "id" in document}
     non_matching_ids = record_ids_set - matching_ids
 
+    log.debug(f"matching_ids len = {len(matching_ids)}")
+    log.debug(f"non_matching_ids = {len(non_matching_ids)}")
+
     # For each non-matching id: add it to mongodb
     for id in tqdm(non_matching_ids):
-        record_details = knackly.get_record_details(id, c)
+        catalog = record_id_map[id]
+        record_details = knackly.get_record_details(id, catalog)
         document = format_document(
-            record_details, catalog=c
+            record_details, catalog
         )  # Implementation of `format_document()` will change in the future
         result = collection.insert_one(document)
+        log.info(f"Inserted {id} for {catalog} into MongoDB.")
 
-    exit()
+    # exit()
 
     # For each matching id:
     # if the Knackly record's last modified date is greater than the MongoDB document's last modified date + 5 minutes
     # GET the data for the Knackly record in the given catalog
     # upsert that Knackly record into MongoDB based on the record id
+    count = 0
     matching_ids_metadata = [r for r in records if r.get("id") in matching_ids]
     for r in matching_ids_metadata:
         mongo_document = collection.find_one({"id": r.get("id")})
@@ -150,11 +160,16 @@ def main(args: argparse.Namespace):
             # print(
             #     f"Record {r.get('id')} was last modified on {knackly_last_modified}, but the MongoDB version was last modified on {mongo_last_modified}"
             # )
-            record_details = knackly.get_record_details(r.get("id"), catalog=c)
-            document = format_document(record_details, catalog=c)
+            count += 1
+            # record_details = knackly.get_record_details(r.get("id"), catalog=c)
+            # document = format_document(record_details, catalog=c)
             # result = collection.replace_one(
             #     filter={"id": record_details.get("id")}, replacement=document
             # )
+    log.debug(f"{count = }")
+    log.debug(
+        f"non-matching ids: {[(id, record_id_map[id]) for id in non_matching_ids]}"
+    )
 
 
 if __name__ == "__main__":

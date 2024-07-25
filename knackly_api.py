@@ -84,7 +84,6 @@ class KnacklyAPI:
             print(f"Error: {e}")
             print("Response content:", response.content)
             print("Response URL:", response.url)
-            print("Request parameters:", response.pa)
             raise
 
         result = response.json()
