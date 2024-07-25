@@ -75,14 +75,13 @@ def format_document(record_details: dict, catalog: str) -> dict:
 
 
 def main(args: argparse.Namespace):
+    # Setup API credentials
     load_dotenv()
-
     knackly = KnacklyAPI(
         key_id=os.getenv("KEY"),
         secret=os.getenv("SECRET"),
         tenancy=os.getenv("TENANCY"),
     )
-
     mongo_user = os.getenv("MONGO_USER")
     mongo_pass = os.getenv("MONGO_PASSWORD")
     mongo_cluster = os.getenv("MONGO_CLUSTER")
@@ -92,9 +91,12 @@ def main(args: argparse.Namespace):
     db = client["LightningDocs"]
     collection = db["Records"]
 
+    # Get a list of all catalogs available to this API key
     catalog_objects = knackly.get_available_catalogs()
     catalogs = [c["name"] for c in catalog_objects if "name" in c]
 
+    # Build a dictionary consisting of the key:value pairs record_id:catalog
+    record_id_map = {}
     for idx, c in enumerate(catalogs):
         if idx == 3:
             # break
@@ -111,55 +113,48 @@ def main(args: argparse.Namespace):
         if len(records) == 0:
             continue
 
-        record_ids = [r["id"] for r in records if "id" in r]
-        matching_docs = collection.find({"id": {"$in": record_ids}}, {"id": 1})
-        matching_ids = {
-            document["id"] for document in matching_docs if "id" in document
-        }  # matching_ids is a 'set' data structure.
+        record_id_map.update({r["id"]: c for r in records if "id" in r})
 
-        record_ids_set = set(record_ids)
+    # Using the record_id_map, create a subset for id's already in mongodb and a subset for id's not in mongodb.
+    record_ids = [r for r in record_id_map]
+    record_ids_set = set(record_ids)
+    matching_docs = collection.find({"id": {"$in": record_ids}}, {"id": 1})
 
-        non_matching_ids = record_ids_set - matching_ids
-        if len(non_matching_ids) == 0:
-            continue
+    matching_ids = {document["id"] for document in matching_docs if "id" in document}
+    non_matching_ids = record_ids_set - matching_ids
 
-        print(f"{idx}. total records found in the {c} catalog: {len(record_ids)}. ")
-        # print("Matching ids:", len(matching_ids))
-        # print("Non-matching ids:", len(non_matching_ids))
+    # For each non-matching id: add it to mongodb
+    for id in tqdm(non_matching_ids):
+        record_details = knackly.get_record_details(id, c)
+        document = format_document(
+            record_details, catalog=c
+        )  # Implementation of `format_document()` will change in the future
+        result = collection.insert_one(document)
 
-        # For each non-matching id:
-        # Add it as a new document to MongoDB.
-        # Implementation details of `add_new_document()` are irrelevant for now.
-        for id in non_matching_ids:
-            # record_details = knackly.get_record_details(id, c)
-            # document = format_document(record_details, catalog=c)
-            # result = collection.insert_one(document)
-            pass
+    exit()
 
-        # For each matching id:
-        # if the Knackly record's last modified date is greater than the MongoDB document's last modified date + 5 minutes
-        # GET the data for the Knackly record in the given catalog
-        # upsert that Knackly record into MongoDB based on the record id
-        matching_ids_metadata = [r for r in records if r.get("id") in matching_ids]
-        for r in matching_ids_metadata:
-            mongo_document = collection.find_one({"id": r.get("id")})
-
-            knackly_last_modified = datetime.strptime(
-                r.get("lastModified"), "%Y-%m-%dT%H:%M:%S.%fZ"
-            )
-            mongo_last_modified = datetime.strptime(
-                mongo_document.get("lastModified"), "%Y-%m-%dT%H:%M:%S.%fZ"
-            )
-
-            if knackly_last_modified > (mongo_last_modified + timedelta(minutes=5)):
-                # print(
-                #     f"Record {r.get('id')} was last modified on {knackly_last_modified}, but the MongoDB version was last modified on {mongo_last_modified}"
-                # )
-                record_details = knackly.get_record_details(r.get("id"), catalog=c)
-                document = format_document(record_details, catalog=c)
-                # result = collection.replace_one(
-                #     filter={"id": record_details.get("id")}, replacement=document
-                # )
+    # For each matching id:
+    # if the Knackly record's last modified date is greater than the MongoDB document's last modified date + 5 minutes
+    # GET the data for the Knackly record in the given catalog
+    # upsert that Knackly record into MongoDB based on the record id
+    matching_ids_metadata = [r for r in records if r.get("id") in matching_ids]
+    for r in matching_ids_metadata:
+        mongo_document = collection.find_one({"id": r.get("id")})
+        knackly_last_modified = datetime.strptime(
+            r.get("lastModified"), "%Y-%m-%dT%H:%M:%S.%fZ"
+        )
+        mongo_last_modified = datetime.strptime(
+            mongo_document.get("lastModified"), "%Y-%m-%dT%H:%M:%S.%fZ"
+        )
+        if knackly_last_modified > (mongo_last_modified + timedelta(minutes=5)):
+            # print(
+            #     f"Record {r.get('id')} was last modified on {knackly_last_modified}, but the MongoDB version was last modified on {mongo_last_modified}"
+            # )
+            record_details = knackly.get_record_details(r.get("id"), catalog=c)
+            document = format_document(record_details, catalog=c)
+            # result = collection.replace_one(
+            #     filter={"id": record_details.get("id")}, replacement=document
+            # )
 
 
 if __name__ == "__main__":
