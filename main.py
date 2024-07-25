@@ -37,6 +37,7 @@ def parse_arguments() -> argparse.Namespace:
                 f"please ensure that the date is in the format YYYY-MM-DD. received: {args.date}"
             )
     else:
+        # If args.date was not provided, default it to be the first day of the previous month
         today = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
         first_of_the_month = today.replace(day=1)
         first_of_last_month = (first_of_the_month - timedelta(days=1)).replace(day=1)
@@ -46,6 +47,31 @@ def parse_arguments() -> argparse.Namespace:
     args.date = datetime.strftime(args.date, "%Y-%m-%d")
 
     return args
+
+
+def format_document(record_details: dict, catalog: str) -> dict:
+    """Formats a given Knackly record into the MongoDB structure that we expect.
+
+    Args:
+        record_details (dict): The results from calling the `get_record_details` method from the KnacklyAPI class.
+        catalog (str): The name of the catalog that this record came from
+
+    Returns:
+        dict: The slightly modified Knackly record
+    """
+    # Inject the catalog as a new key/value
+    record_details["LD_catalog"] = catalog
+
+    for app in record_details.get("apps"):
+        # Copy the created date from the record into a new key/value pair for each app
+        app["LD_createdDate"] = record_details.get("created")
+
+        # Create a new key/value pair for the user type. Assume it was 'api' if the user that last ran the app ends with '_api', otherwise assume 'regular'
+        app["LD_userType"] = (
+            "api" if record_details.get("lastRunBy", "").endswith("_api") else "regular"
+        )
+
+    return record_details
 
 
 def main(args: argparse.Namespace):
@@ -60,12 +86,9 @@ def main(args: argparse.Namespace):
     mongo_user = os.getenv("MONGO_USER")
     mongo_pass = os.getenv("MONGO_PASSWORD")
     mongo_cluster = os.getenv("MONGO_CLUSTER")
-    print("connecting")
     client = MongoClient(
         f"mongodb+srv://{mongo_user}:{mongo_pass}@{mongo_cluster}/?retryWrites=true&w=majority"
     )
-    print("finished connecting")
-    print()
     db = client["LightningDocs"]
     collection = db["Records"]
 
@@ -86,14 +109,13 @@ def main(args: argparse.Namespace):
 
         # Break out of this iteration if there weren't any records found matching the various filters.
         if len(records) == 0:
-            # print(f"{len(records)} records were found for {c} catalog, so skipping...")
             continue
 
         record_ids = [r["id"] for r in records if "id" in r]
         matching_docs = collection.find({"id": {"$in": record_ids}}, {"id": 1})
         matching_ids = {
             document["id"] for document in matching_docs if "id" in document
-        }  # This is a 'set' data structure.
+        }  # matching_ids is a 'set' data structure.
 
         record_ids_set = set(record_ids)
 
@@ -101,29 +123,43 @@ def main(args: argparse.Namespace):
         if len(non_matching_ids) == 0:
             continue
 
-        print(
-            f"{idx}. total records found in the {c} catalog: {len(record_ids)}. ",
-            end="",
-        )
+        print(f"{idx}. total records found in the {c} catalog: {len(record_ids)}. ")
         # print("Matching ids:", len(matching_ids))
-        print("Non-matching ids:", len(non_matching_ids))
+        # print("Non-matching ids:", len(non_matching_ids))
 
-    # last_modified = {"c": "after", "v": "2024-07-17T00:00"}
-    # x = knackly.get_records_in_catalog(
-    #     catalog="Transactional", last_modified=last_modified, limit=3, status="Ok"
-    # )
-    # print(type(x))
-    # print(len(x))
+        # For each non-matching id:
+        # Add it as a new document to MongoDB.
+        # Implementation details of `add_new_document()` are irrelevant for now.
+        for id in non_matching_ids:
+            # record_details = knackly.get_record_details(id, c)
+            # document = format_document(record_details, catalog=c)
+            # result = collection.insert_one(document)
+            pass
 
-    # ids_to_check = ["662a7f630cb5c188", "662a7630cba1df2", "123"]
+        # For each matching id:
+        # if the Knackly record's last modified date is greater than the MongoDB document's last modified date + 5 minutes
+        # GET the data for the Knackly record in the given catalog
+        # upsert that Knackly record into MongoDB based on the record id
+        matching_ids_metadata = [r for r in records if r.get("id") in matching_ids]
+        for r in matching_ids_metadata:
+            mongo_document = collection.find_one({"id": r.get("id")})
 
-    # print("finding")
-    # matching_documents = collection.find({"id": {"$in": ids_to_check}}, {"id": 1})
-    # print("finished finding")
+            knackly_last_modified = datetime.strptime(
+                r.get("lastModified"), "%Y-%m-%dT%H:%M:%S.%fZ"
+            )
+            mongo_last_modified = datetime.strptime(
+                mongo_document.get("lastModified"), "%Y-%m-%dT%H:%M:%S.%fZ"
+            )
 
-    # matching_ids = [doc["id"] for doc in matching_documents]
-    # print("Matching IDs:", matching_ids)
-    # print("Matching documents:", matching_documents)
+            if knackly_last_modified > (mongo_last_modified + timedelta(minutes=5)):
+                # print(
+                #     f"Record {r.get('id')} was last modified on {knackly_last_modified}, but the MongoDB version was last modified on {mongo_last_modified}"
+                # )
+                record_details = knackly.get_record_details(r.get("id"), catalog=c)
+                document = format_document(record_details, catalog=c)
+                # result = collection.replace_one(
+                #     filter={"id": record_details.get("id")}, replacement=document
+                # )
 
 
 if __name__ == "__main__":
