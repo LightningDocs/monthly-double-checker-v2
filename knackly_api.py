@@ -63,16 +63,16 @@ class KnacklyAPI:
         """
         url = f"{self.base_url}/catalogs/{catalog}/items"
 
-        if last_modified:
-            lastmod_dict = {"lastmod": last_modified}
-            lastmod_str = json.dumps(lastmod_dict, separators=(",", ":"))
-
         params = {
             "status": status,
             "skip": skip,
             "limit": limit,
-            "f": lastmod_str,
         }
+
+        if last_modified:
+            lastmod_dict = {"lastmod": last_modified}
+            lastmod_str = json.dumps(lastmod_dict, separators=(",", ":"))
+            params.update({"f": lastmod_str})
 
         # Remove any None values from params
         params = {k: v for k, v in params.items() if v is not None}

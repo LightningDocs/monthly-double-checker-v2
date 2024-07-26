@@ -1,6 +1,5 @@
 import os
 import argparse
-import json
 from datetime import datetime, timedelta, UTC
 
 from dotenv import load_dotenv
@@ -8,6 +7,7 @@ from pymongo import MongoClient
 from tqdm import tqdm
 
 from knackly_api import KnacklyAPI
+from mongo_db import format_document, copy_created_dates, copy_app_user_types
 from logger import initialize_logger
 
 
@@ -49,31 +49,6 @@ def parse_arguments() -> argparse.Namespace:
     args.date = datetime.strftime(args.date, "%Y-%m-%d")
 
     return args
-
-
-def format_document(record_details: dict, catalog: str) -> dict:
-    """Formats a given Knackly record into the MongoDB structure that we expect.
-
-    Args:
-        record_details (dict): The results from calling the `get_record_details` method from the KnacklyAPI class.
-        catalog (str): The name of the catalog that this record came from
-
-    Returns:
-        dict: The slightly modified Knackly record
-    """
-    # Inject the catalog as a new key/value
-    record_details["LD_catalog"] = catalog
-
-    for app in record_details.get("apps"):
-        # Copy the created date from the record into a new key/value pair for each app
-        app["LD_createdDate"] = record_details.get("created")
-
-        # Create a new key/value pair for the user type. Assume it was 'api' if the user that last ran the app ends with '_api', otherwise assume 'regular'
-        app["LD_userType"] = (
-            "api" if record_details.get("lastRunBy", "").endswith("_api") else "regular"
-        )
-
-    return record_details
 
 
 def main(args: argparse.Namespace):
@@ -125,9 +100,6 @@ def main(args: argparse.Namespace):
             r.update({"catalog": c})
         record_id_map.update({r["id"]: r for r in records if "id" in r})
 
-    # with open("record_id_map.json", mode="w") as outfile:
-    #     json.dump(record_id_map, outfile, indent=4)
-
     # Using the record_id_map, create a subset for id's already in mongodb and a subset for id's not in mongodb.
     record_ids = [r for r in record_id_map]
     record_ids_set = set(record_ids)
@@ -147,6 +119,7 @@ def main(args: argparse.Namespace):
         for id in tqdm(non_matching_ids):
             catalog = record_id_map[id].get("catalog")
             created_date = record_id_map[id].get("created")
+
             record_details = knackly.get_record_details(id, catalog)
             document = format_document(
                 record_details, catalog
@@ -157,10 +130,7 @@ def main(args: argparse.Namespace):
         f"{len(non_matching_ids)} id's found in Knackly that don't currently exist in MongoDB."
     )
 
-    # For each matching id:
-    # if the Knackly record's last modified date is greater than the MongoDB document's last modified date + 5 minutes
-    # GET the data for the Knackly record in the given catalog
-    # upsert that Knackly record into MongoDB based on the record id
+    # For each matching id: check if it was modified past what we have stored in mongodb
     matching_ids_metadata = [
         r for r in record_id_map.values() if r.get("id") in matching_ids
     ]
@@ -179,13 +149,17 @@ def main(args: argparse.Namespace):
         mongo_last_modified = datetime.strptime(
             mongo_document.get("lastModified"), "%Y-%m-%dT%H:%M:%S.%fZ"
         )
-        if knackly_last_modified > (mongo_last_modified + timedelta(minutes=5)):
-            # record_details = knackly.get_record_details(r.get("id"), catalog=c)
-            # document = format_document(record_details, catalog=c)
-            # result = collection.replace_one(
-            #     filter={"id": record_details.get("id")}, replacement=document
-            # )
 
+        if knackly_last_modified > (mongo_last_modified + timedelta(minutes=5)):
+            # Modify the document to make it conform to what MongoDB expects.
+            record_details = knackly.get_record_details(
+                r.get("id"), catalog=r.get("catalog")
+            )
+            document = copy_created_dates(mongo_document, record_details)
+            document = copy_app_user_types(mongo_document, document)
+            result = collection.replace_one(
+                filter={"id": record_details.get("id")}, replacement=document
+            )
             modified_document_count += 1
 
             # Log the heading information for this section
@@ -196,7 +170,6 @@ def main(args: argparse.Namespace):
                     f"{str('Record id').ljust(23)} | {str('Catalog').ljust(20)} | {'Knackly last modified'.ljust(26)} | {'Mongo last modified'.ljust(26)} | Difference"
                 )
                 log.info(f"{'-'*117}")
-
             log.info(
                 f"{r.get('id').ljust(23)} | {r.get('catalog').ljust(20)} | {str(knackly_last_modified).ljust(26)} | {str(mongo_last_modified).ljust(26)} | {knackly_last_modified - mongo_last_modified}"
             )
