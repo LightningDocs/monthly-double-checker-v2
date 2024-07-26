@@ -1,5 +1,6 @@
 import os
 import argparse
+import json
 from datetime import datetime, timedelta, UTC
 
 from dotenv import load_dotenv
@@ -97,9 +98,11 @@ def main(args: argparse.Namespace):
     catalog_objects = knackly.get_available_catalogs()
     catalogs = [c["name"] for c in catalog_objects if "name" in c]
 
-    # Build a dictionary consisting of the key:value pairs record_id:catalog
+    # Build a dictionary consisting of the key:value pairs record_id:record
+    # (record is itself a dictionary, containing metadata about the record and what catalog it came from)
+    log.debug(f"Collecting record metadata across {len(catalogs)} catalogs...")
     record_id_map = {}
-    pbar = tqdm(enumerate(catalogs))
+    pbar = tqdm(enumerate(catalogs), total=len(catalogs))
     for idx, c in pbar:
         pbar.set_description(str(c).ljust(15))
         if idx == 3:
@@ -117,7 +120,13 @@ def main(args: argparse.Namespace):
         if len(records) == 0:
             continue
 
-        record_id_map.update({r["id"]: c for r in records if "id" in r})
+        # Inject the catalog into the metadata about each record, and then update record_id_map
+        for r in records:
+            r.update({"catalog": c})
+        record_id_map.update({r["id"]: r for r in records if "id" in r})
+
+    # with open("record_id_map.json", mode="w") as outfile:
+    #     json.dump(record_id_map, outfile, indent=4)
 
     # Using the record_id_map, create a subset for id's already in mongodb and a subset for id's not in mongodb.
     record_ids = [r for r in record_id_map]
@@ -127,28 +136,42 @@ def main(args: argparse.Namespace):
     matching_ids = {document["id"] for document in matching_docs if "id" in document}
     non_matching_ids = record_ids_set - matching_ids
 
-    log.debug(f"matching_ids len = {len(matching_ids)}")
-    log.debug(f"non_matching_ids = {len(non_matching_ids)}")
-
     # For each non-matching id: add it to mongodb
-    for id in tqdm(non_matching_ids):
-        catalog = record_id_map[id]
-        record_details = knackly.get_record_details(id, catalog)
-        document = format_document(
-            record_details, catalog
-        )  # Implementation of `format_document()` will change in the future
-        result = collection.insert_one(document)
-        log.info(f"Inserted {id} for {catalog} into MongoDB.")
-
-    # exit()
+    log.debug(f"Adding {len(non_matching_ids)} new documents to MongoDB...")
+    if non_matching_ids:
+        log.info(f"{'-'*63}")
+        log.info(
+            f"{str('Record id').ljust(23)} | {str('Catalog').ljust(20)} | Created Date"
+        )
+        log.info(f"{'-'*63}")
+        for id in tqdm(non_matching_ids):
+            catalog = record_id_map[id].get("catalog")
+            created_date = record_id_map[id].get("created")
+            record_details = knackly.get_record_details(id, catalog)
+            document = format_document(
+                record_details, catalog
+            )  # Implementation of `format_document()` will change in the future
+            result = collection.insert_one(document)
+            log.info(f"{str(id).ljust(23)} | {str(catalog).ljust(20)} | {created_date}")
+    log.info(
+        f"{len(non_matching_ids)} id's found in Knackly that don't currently exist in MongoDB."
+    )
 
     # For each matching id:
     # if the Knackly record's last modified date is greater than the MongoDB document's last modified date + 5 minutes
     # GET the data for the Knackly record in the given catalog
     # upsert that Knackly record into MongoDB based on the record id
-    count = 0
-    matching_ids_metadata = [r for r in records if r.get("id") in matching_ids]
-    for r in matching_ids_metadata:
+    matching_ids_metadata = [
+        r for r in record_id_map.values() if r.get("id") in matching_ids
+    ]
+    log.debug(
+        f"Searching through {len(matching_ids)} existing id's for outdated documents to replace..."
+    )
+    modified_document_count = 0
+    heading_already_printed = False
+    pbar = tqdm(matching_ids_metadata)
+    for r in pbar:
+        pbar.set_description(f"{modified_document_count} documents replaced")
         mongo_document = collection.find_one({"id": r.get("id")})
         knackly_last_modified = datetime.strptime(
             r.get("lastModified"), "%Y-%m-%dT%H:%M:%S.%fZ"
@@ -157,18 +180,28 @@ def main(args: argparse.Namespace):
             mongo_document.get("lastModified"), "%Y-%m-%dT%H:%M:%S.%fZ"
         )
         if knackly_last_modified > (mongo_last_modified + timedelta(minutes=5)):
-            # print(
-            #     f"Record {r.get('id')} was last modified on {knackly_last_modified}, but the MongoDB version was last modified on {mongo_last_modified}"
-            # )
-            count += 1
             # record_details = knackly.get_record_details(r.get("id"), catalog=c)
             # document = format_document(record_details, catalog=c)
             # result = collection.replace_one(
             #     filter={"id": record_details.get("id")}, replacement=document
             # )
-    log.debug(f"{count = }")
-    log.debug(
-        f"non-matching ids: {[(id, record_id_map[id]) for id in non_matching_ids]}"
+
+            modified_document_count += 1
+
+            # Log the heading information for this section
+            if not heading_already_printed:
+                heading_already_printed = True
+                log.info(f"{'-'*117}")
+                log.info(
+                    f"{str('Record id').ljust(23)} | {str('Catalog').ljust(20)} | {'Knackly last modified'.ljust(26)} | {'Mongo last modified'.ljust(26)} | Difference"
+                )
+                log.info(f"{'-'*117}")
+
+            log.info(
+                f"{r.get('id').ljust(23)} | {r.get('catalog').ljust(20)} | {str(knackly_last_modified).ljust(26)} | {str(mongo_last_modified).ljust(26)} | {knackly_last_modified - mongo_last_modified}"
+            )
+    log.info(
+        f"{modified_document_count} out of the {len(matching_ids)} matching documents were replaced with their latest versions."
     )
 
 

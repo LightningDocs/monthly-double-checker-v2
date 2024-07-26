@@ -25,7 +25,7 @@ def initialize_logger() -> logging.Logger:
     """
     Path("./logs").mkdir(exist_ok=True)
 
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
     logger = logging.getLogger(__name__)
     logger.setLevel("DEBUG")
 
