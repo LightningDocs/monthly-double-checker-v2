@@ -69,6 +69,21 @@ def copy_app_user_types(previous_document: dict, new_document: dict) -> dict:
     return new_document
 
 
+def copy_catalog(previous_document: dict, new_document: dict) -> dict:
+    """Copies the LD_catalog key from a previous document into a new document
+
+    Args:
+        previous_document (dict): A Knackly record-like document
+        new_document (dict): A Knackly record-like document
+
+    Returns:
+        dict: The new, modified document.
+    """
+    catalog = previous_document.get("LD_catalog")
+    new_document["LD_catalog"] = catalog
+    return new_document
+
+
 def main():
     pass
 

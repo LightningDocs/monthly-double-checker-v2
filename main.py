@@ -7,7 +7,12 @@ from pymongo import MongoClient
 from tqdm import tqdm
 
 from knackly_api import KnacklyAPI
-from mongo_db import format_document, copy_created_dates, copy_app_user_types
+from mongo_db import (
+    format_document,
+    copy_created_dates,
+    copy_app_user_types,
+    copy_catalog,
+)
 from logger import initialize_logger
 
 
@@ -155,7 +160,8 @@ def main(args: argparse.Namespace):
             record_details = knackly.get_record_details(
                 r.get("id"), catalog=r.get("catalog")
             )
-            document = copy_created_dates(mongo_document, record_details)
+            document = copy_catalog(mongo_document, record_details)
+            document = copy_created_dates(mongo_document, document)
             document = copy_app_user_types(mongo_document, document)
             result = collection.replace_one(
                 filter={"id": record_details.get("id")}, replacement=document
