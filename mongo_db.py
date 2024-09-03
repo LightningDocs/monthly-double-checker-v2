@@ -1,3 +1,9 @@
+from datetime import datetime, UTC
+from pymongo import MongoClient
+
+from knackly_api import guess_responsible_app
+
+
 def format_document(record_details: dict, catalog: str) -> dict:
     """Formats a raw Knackly record into the MongoDB structure that we expect.
 
@@ -8,19 +14,40 @@ def format_document(record_details: dict, catalog: str) -> dict:
     Returns:
         dict: The slightly modified Knackly record
     """
-    # Inject the catalog as a new key/value
-    record_details["LD_catalog"] = catalog
 
-    for app in record_details.get("apps"):
-        # Copy the created date from the record into a new key/value pair for each app
-        app["LD_createdDate"] = record_details.get("created")
+    def fill_billing_array(apps: list) -> list:
+        """Produces a list of billing objects based on a list of apps.
 
-        # Create a new key/value pair for the user type. Assume it was 'api' if the user that last ran the app ends with '_api', otherwise assume 'regular'
-        app["LD_userType"] = (
-            "api" if record_details.get("lastRunBy", "").endswith("_api") else "regular"
-        )
+        Args:
+            apps (list): A list of objects, where each object corresponds to a single app object.
 
-    return record_details
+        Returns:
+            list: A list of objects containing an "app" key (string value) and a "billed" key (boolean/None value).
+        """
+        return [{"app": a["name"], "billed": None} for a in apps]
+
+    document = {
+        "catalog": catalog,
+        "timeline": [],
+        "billing": [],
+        "record_id": record_details.get("id"),
+        "internally_modified": datetime.now(UTC),
+    }
+
+    # Come up with an educated guess for what the responsible_app should be
+    responsible_app = guess_responsible_app(record_details["apps"])
+
+    # Inject the responsible_app into the record details,
+    # and then inject the record_details into the timeline array.
+    record_details["responsible_app"] = responsible_app
+    document["timeline"].append(record_details)
+
+    # Fill the billing array (potentially)
+    data = record_details["data"]
+    if not data.get("isTestFile"):
+        document["billing"] = fill_billing_array(record_details["apps"])
+
+    return document
 
 
 def copy_created_dates(previous_document: dict, new_document: dict) -> dict:
@@ -82,6 +109,39 @@ def copy_catalog(previous_document: dict, new_document: dict) -> dict:
     catalog = previous_document.get("LD_catalog")
     new_document["LD_catalog"] = catalog
     return new_document
+
+
+def add_to_timeline(
+    client: MongoClient,
+    db_name: str,
+    col_name: str,
+    record_id: str,
+    record_details: dict,
+) -> None:
+    """Adds the details of a record (as returned by Knackly API) to a timeline object for a particular record
+
+    Args:
+        client (MongoClient): The MongoClient object
+        db_name (str): The name of the database to connect to
+        col_name (str): The name of the collection to look in
+        record_id (str): The id of the particular record
+        record_details (dict): The record_details to be used to inject into the timeline
+    """
+    db = client[db_name]
+    collection = db[col_name]
+
+    responsible_app = guess_responsible_app(record_details["apps"])
+    record_details["responsible_app"] = responsible_app
+
+    # If a document with the provided record_id cannot be found, throw an error
+    result = collection.find_one_and_update(
+        {"record_id": record_id}, {"$push": {"timeline": record_details}}
+    )
+
+    if not result:
+        raise ReferenceError(
+            f"could not find a document in {db_name}.{col_name} with the record id: {record_id}"
+        )
 
 
 def main():

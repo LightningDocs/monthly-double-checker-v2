@@ -72,7 +72,7 @@ def main(args: argparse.Namespace):
         f"mongodb+srv://{mongo_user}:{mongo_pass}@{mongo_cluster}/?retryWrites=true&w=majority"
     )
     db = client["LightningDocs"]
-    collection = db["Records"]
+    collection = db["rob_test_Records"]
 
     # Get a list of all catalogs available to this API key
     catalog_objects = knackly.get_available_catalogs()

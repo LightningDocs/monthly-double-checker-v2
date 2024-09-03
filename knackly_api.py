@@ -2,6 +2,22 @@ import requests
 import json
 
 
+def guess_responsible_app(apps: list) -> str:
+    """Tries to guess the name of the app that most likely caused this record by looking at the most recently modified, OK app.
+
+    Args:
+        apps (list): A list of Knackly "app" objects
+
+    Returns:
+        str: The name
+    """
+    filtered_apps = [
+        (app["name"], app["lastRun"]) for app in apps if app["status"] == "Ok"
+    ]
+    filtered_apps.sort(key=lambda x: x[1], reverse=True)
+    return filtered_apps[0][0]
+
+
 class KnacklyAPI:
     def __init__(self, key_id: str, secret: str, tenancy: str):
         self.key_id = key_id
