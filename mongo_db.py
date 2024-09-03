@@ -1,5 +1,5 @@
 from datetime import datetime, UTC
-from pymongo import MongoClient
+from pymongo.collection import Collection
 
 from knackly_api import guess_responsible_app
 
@@ -112,35 +112,44 @@ def copy_catalog(previous_document: dict, new_document: dict) -> dict:
 
 
 def add_to_timeline(
-    client: MongoClient,
-    db_name: str,
-    col_name: str,
+    col: Collection,
     record_id: str,
     record_details: dict,
 ) -> None:
     """Adds the details of a record (as returned by Knackly API) to a timeline object for a particular record
 
     Args:
-        client (MongoClient): The MongoClient object
-        db_name (str): The name of the database to connect to
-        col_name (str): The name of the collection to look in
+        col_name (collection): The pymongo collection object
         record_id (str): The id of the particular record
         record_details (dict): The record_details to be used to inject into the timeline
     """
-    db = client[db_name]
-    collection = db[col_name]
 
     responsible_app = guess_responsible_app(record_details["apps"])
     record_details["responsible_app"] = responsible_app
 
     # If a document with the provided record_id cannot be found, throw an error
-    result = collection.find_one_and_update(
+    result = col.find_one_and_update(
         {"record_id": record_id}, {"$push": {"timeline": record_details}}
     )
-
     if not result:
         raise ReferenceError(
-            f"could not find a document in {db_name}.{col_name} with the record id: {record_id}"
+            f"could not find a document in {col.full_name} with the record id: {record_id}"
+        )
+
+
+def update_internally_modified(col: Collection, record_id: str) -> None:
+    """Updates the internally modified field of a record
+
+    Args:
+        col (Collection): The pymongo collection object
+        record_id (str): The id of the particular record
+    """
+    result = col.find_one_and_update(
+        {"record_id": record_id}, {"$currentDate": {"internally_modified": True}}
+    )
+    if not result:
+        raise ReferenceError(
+            f"could not find a document in {col.full_name} with the record id: {record_id}"
         )
 
 
