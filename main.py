@@ -7,12 +7,7 @@ from pymongo import MongoClient
 from tqdm import tqdm
 
 from knackly_api import KnacklyAPI
-from mongo_db import (
-    format_document,
-    copy_created_dates,
-    copy_app_user_types,
-    copy_catalog,
-)
+from mongo_db import format_document, add_to_timeline, update_internally_modified
 from logger import initialize_logger
 
 
@@ -106,9 +101,11 @@ def main(args: argparse.Namespace):
         record_id_map.update({r["id"]: r for r in records if "id" in r})
 
     # Using the record_id_map, create a subset for id's already in mongodb and a subset for id's not in mongodb.
-    record_ids = [r for r in record_id_map]
+    record_ids = record_id_map.keys()
     record_ids_set = set(record_ids)
-    matching_docs = collection.find({"id": {"$in": record_ids}}, {"id": 1})
+    matching_docs = collection.find(
+        {"record_id": {"$in": record_ids}}, {"record_id": 1}
+    )
 
     matching_ids = {document["id"] for document in matching_docs if "id" in document}
     non_matching_ids = record_ids_set - matching_ids
@@ -117,18 +114,14 @@ def main(args: argparse.Namespace):
     log.debug(f"Adding {len(non_matching_ids)} new documents to MongoDB...")
     if non_matching_ids:
         log.info(f"{'-'*63}")
-        log.info(
-            f"{str('Record id').ljust(23)} | {str('Catalog').ljust(20)} | Created Date"
-        )
+        log.info(f"{'Record id'.ljust(23)} | {'Catalog'.ljust(20)} | Created Date")
         log.info(f"{'-'*63}")
         for id in tqdm(non_matching_ids):
             catalog = record_id_map[id].get("catalog")
             created_date = record_id_map[id].get("created")
 
             record_details = knackly.get_record_details(id, catalog)
-            document = format_document(
-                record_details, catalog
-            )  # Implementation of `format_document()` will change in the future
+            document = format_document(record_details, catalog)
             result = collection.insert_one(document)
             log.info(f"{str(id).ljust(23)} | {str(catalog).ljust(20)} | {created_date}")
     log.info(
@@ -147,7 +140,7 @@ def main(args: argparse.Namespace):
     pbar = tqdm(matching_ids_metadata)
     for r in pbar:
         pbar.set_description(f"{modified_document_count} documents replaced")
-        mongo_document = collection.find_one({"id": r.get("id")})
+        mongo_document = collection.find_one({"record_id": r.get("id")})
         knackly_last_modified = datetime.strptime(
             r.get("lastModified"), "%Y-%m-%dT%H:%M:%S.%fZ"
         )
@@ -160,12 +153,15 @@ def main(args: argparse.Namespace):
             record_details = knackly.get_record_details(
                 r.get("id"), catalog=r.get("catalog")
             )
-            document = copy_catalog(mongo_document, record_details)
-            document = copy_created_dates(mongo_document, document)
-            document = copy_app_user_types(mongo_document, document)
-            result = collection.replace_one(
-                filter={"id": record_details.get("id")}, replacement=document
+            add_to_timeline(
+                col=collection,
+                record_id=record_details.get("id"),
+                record_details=record_details,
             )
+            update_internally_modified(
+                col=collection, record_id=record_details.get("id")
+            )
+
             modified_document_count += 1
 
             # Log the heading information for this section
