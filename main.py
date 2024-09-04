@@ -101,7 +101,7 @@ def main(args: argparse.Namespace):
         record_id_map.update({r["id"]: r for r in records if "id" in r})
 
     # Using the record_id_map, create a subset for id's already in mongodb and a subset for id's not in mongodb.
-    record_ids = record_id_map.keys()
+    record_ids = list(record_id_map.keys())
     record_ids_set = set(record_ids)
     matching_docs = collection.find(
         {"record_id": {"$in": record_ids}}, {"record_id": 1}
