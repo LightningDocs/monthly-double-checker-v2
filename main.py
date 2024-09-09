@@ -132,7 +132,7 @@ def main(args: argparse.Namespace):
 
     # For each matching id: check if it was modified past what we have stored in mongodb
     matching_ids_metadata = [
-        r for r in record_id_map.values() if r.get("record_id") in matching_ids
+        r for r in record_id_map.values() if r.get("id") in matching_ids
     ]
     log.debug(
         f"Searching through {len(matching_ids)} existing id's for outdated documents to replace..."
@@ -142,26 +142,27 @@ def main(args: argparse.Namespace):
     pbar = tqdm(matching_ids_metadata)
     for r in pbar:
         pbar.set_description(f"{modified_document_count} documents replaced")
-        mongo_document = collection.find_one({"record_id": r.get("record_id")})
+        mongo_document = collection.find_one({"record_id": r.get("id")})
         knackly_last_modified = datetime.strptime(
             r.get("lastModified"), "%Y-%m-%dT%H:%M:%S.%fZ"
         )
-        mongo_last_modified = datetime.strptime(
-            mongo_document.get("lastModified"), "%Y-%m-%dT%H:%M:%S.%fZ"
-        )
+        # mongo_last_modified = datetime.strptime(
+        #     mongo_document.get("lastModified"), "%Y-%m-%dT%H:%M:%S.%fZ"
+        # )
+        mongo_last_modified = mongo_document.get("internally_modified")
 
         if knackly_last_modified > (mongo_last_modified + timedelta(minutes=5)):
             # Modify the document to make it conform to what MongoDB expects.
             record_details = knackly.get_record_details(
-                r.get("record_id"), catalog=r.get("catalog")
+                r.get("id"), catalog=r.get("catalog")
             )
             add_to_timeline(
                 col=collection,
-                record_id=record_details.get("record_id"),
+                record_id=record_details.get("id"),
                 record_details=record_details,
             )
             update_internally_modified(
-                col=collection, record_id=record_details.get("record_id")
+                col=collection, record_id=record_details.get("id")
             )
 
             modified_document_count += 1
@@ -175,7 +176,7 @@ def main(args: argparse.Namespace):
                 )
                 log.info(f"{'-'*117}")
             log.info(
-                f"{r.get('record_id').ljust(23)} | {r.get('catalog').ljust(20)} | {str(knackly_last_modified).ljust(26)} | {str(mongo_last_modified).ljust(26)} | {knackly_last_modified - mongo_last_modified}"
+                f"{r.get('id').ljust(23)} | {r.get('catalog').ljust(20)} | {str(knackly_last_modified).ljust(26)} | {str(mongo_last_modified).ljust(26)} | {knackly_last_modified - mongo_last_modified}"
             )
     log.info(
         f"{modified_document_count} out of the {len(matching_ids)} matching documents were replaced with their latest versions."
