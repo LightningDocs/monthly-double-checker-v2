@@ -1,14 +1,14 @@
-import os
 import argparse
-from datetime import datetime, timedelta, UTC
+import os
+from datetime import UTC, datetime, timedelta
 
 from dotenv import load_dotenv
 from pymongo import MongoClient
 from tqdm import tqdm
 
 from knackly_api import KnacklyAPI
-from mongo_db import format_document, add_to_timeline, update_internally_modified
 from logger import initialize_logger
+from mongo_db import add_to_timeline, format_document, update_internally_modified
 
 
 def parse_arguments() -> argparse.Namespace:
@@ -23,7 +23,7 @@ def parse_arguments() -> argparse.Namespace:
         parser.add_argument(
             "-d",
             "--date",
-            help="specify a date in the format `YYYY-MM-DD`. Any records with a lastModified date greater than this date will be what is searched. Defaults to the first of the previous month.",
+            help="specify a date in the format `YYYY-MM-DD`. Any records with a lastModified date greater than or equal to this date will be what is searched. Defaults to the first of the previous month (using UTC time). For example, if this script is ran on 2024-04-12, the date argument will be 2024-03-01",
         )
         return parser
 
@@ -35,12 +35,10 @@ def parse_arguments() -> argparse.Namespace:
         try:
             args.date = datetime.strptime(args.date, "%Y-%m-%d")
         except ValueError:
-            parser.error(
-                f"please ensure that the date is in the format YYYY-MM-DD. received: {args.date}"
-            )
+            parser.error(f"please ensure that the date is in the format YYYY-MM-DD. received: {args.date}")
     else:
         # If args.date was not provided, default it to be the first day of the previous month
-        today = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+        today = datetime.now(tz=UTC).replace(hour=0, minute=0, second=0, microsecond=0)
         first_of_the_month = today.replace(day=1)
         first_of_last_month = (first_of_the_month - timedelta(days=1)).replace(day=1)
         args.date = first_of_last_month
@@ -63,9 +61,7 @@ def main(args: argparse.Namespace):
     mongo_user = os.getenv("MONGO_USER")
     mongo_pass = os.getenv("MONGO_PASSWORD")
     mongo_cluster = os.getenv("MONGO_CLUSTER")
-    client = MongoClient(
-        f"mongodb+srv://{mongo_user}:{mongo_pass}@{mongo_cluster}/?retryWrites=true&w=majority"
-    )
+    client = MongoClient(f"mongodb+srv://{mongo_user}:{mongo_pass}@{mongo_cluster}/?retryWrites=true&w=majority")
     db = client["LightningDocs"]
     collection = db["rob_test_Records"]
 
@@ -77,12 +73,9 @@ def main(args: argparse.Namespace):
     # (record is itself a dictionary, containing metadata about the record and what catalog it came from)
     log.debug(f"Collecting record metadata across {len(catalogs)} catalogs...")
     record_id_map = {}
-    pbar = tqdm(enumerate(catalogs), total=len(catalogs))
-    for idx, c in pbar:
+    pbar = tqdm(catalogs, total=len(catalogs))
+    for c in pbar:
         pbar.set_description(str(c).ljust(15))
-        if idx == 3:
-            # break
-            pass
 
         records = knackly.get_records_in_catalog(
             catalog=c,
@@ -95,22 +88,17 @@ def main(args: argparse.Namespace):
         if len(records) == 0:
             continue
 
-        # Inject the catalog into the metadata about each record, and then update record_id_map
+        # Inject the catalog into the metadata about each record, and then add this new record_id:record key:value pair into the map
         for r in records:
             r.update({"catalog": c})
         record_id_map.update({r["id"]: r for r in records if "id" in r})
 
     # Using the record_id_map, create a subset for id's already in mongodb and a subset for id's not in mongodb.
     record_ids = list(record_id_map.keys())
-    record_ids_set = set(record_ids)
-    matching_docs = collection.find(
-        {"record_id": {"$in": record_ids}}, {"record_id": 1}
-    )
+    matching_docs = collection.find(filter={"record_id": {"$in": record_ids}}, projection=["record_id"])
 
-    matching_ids = {
-        document["record_id"] for document in matching_docs if "record_id" in document
-    }
-    non_matching_ids = record_ids_set - matching_ids
+    matching_ids = {document["record_id"] for document in matching_docs if "record_id" in document}
+    non_matching_ids = set(record_ids) - matching_ids
 
     # For each non-matching id: add it to mongodb
     log.debug(f"Adding {len(non_matching_ids)} new documents to MongoDB...")
@@ -120,50 +108,40 @@ def main(args: argparse.Namespace):
         log.info(f"{'-'*63}")
         for id in tqdm(non_matching_ids):
             catalog = record_id_map[id].get("catalog")
-            created_date = record_id_map[id].get("created")
 
             record_details = knackly.get_record_details(id, catalog)
+            if len(record_details["apps"]) == 0:
+                log.warning(
+                    f"{str(id).ljust(23)} | {str(catalog).ljust(20)} | WARNING: Apps array was empty for this record. Not uploading anything to MongoDB."
+                )
+                continue
             document = format_document(record_details, catalog)
             result = collection.insert_one(document)
+            created_date = record_id_map[id].get("created")
             log.info(f"{str(id).ljust(23)} | {str(catalog).ljust(20)} | {created_date}")
-    log.info(
-        f"{len(non_matching_ids)} id's found in Knackly that don't currently exist in MongoDB."
-    )
+    log.info(f"{len(non_matching_ids)} id's found in Knackly that don't currently exist in MongoDB.")
 
     # For each matching id: check if it was modified past what we have stored in mongodb
-    matching_ids_metadata = [
-        r for r in record_id_map.values() if r.get("id") in matching_ids
-    ]
-    log.debug(
-        f"Searching through {len(matching_ids)} existing id's for outdated documents to replace..."
-    )
+    matching_ids_metadata = [r for r in record_id_map.values() if r.get("id") in matching_ids]
+    log.debug(f"Searching through {len(matching_ids)} existing id's for outdated documents to replace...")
     modified_document_count = 0
     heading_already_printed = False
     pbar = tqdm(matching_ids_metadata)
     for r in pbar:
         pbar.set_description(f"{modified_document_count} documents replaced")
         mongo_document = collection.find_one({"record_id": r.get("id")})
-        knackly_last_modified = datetime.strptime(
-            r.get("lastModified"), "%Y-%m-%dT%H:%M:%S.%fZ"
-        )
-        # mongo_last_modified = datetime.strptime(
-        #     mongo_document.get("lastModified"), "%Y-%m-%dT%H:%M:%S.%fZ"
-        # )
+        knackly_last_modified = datetime.strptime(r.get("lastModified"), "%Y-%m-%dT%H:%M:%S.%fZ")
         mongo_last_modified = mongo_document.get("internally_modified")
 
         if knackly_last_modified > (mongo_last_modified + timedelta(minutes=5)):
             # Modify the document to make it conform to what MongoDB expects.
-            record_details = knackly.get_record_details(
-                r.get("id"), catalog=r.get("catalog")
-            )
+            record_details = knackly.get_record_details(r.get("id"), catalog=r.get("catalog"))
             add_to_timeline(
                 col=collection,
                 record_id=record_details.get("id"),
                 record_details=record_details,
             )
-            update_internally_modified(
-                col=collection, record_id=record_details.get("id")
-            )
+            update_internally_modified(col=collection, record_id=record_details.get("id"))
 
             modified_document_count += 1
 
@@ -178,9 +156,7 @@ def main(args: argparse.Namespace):
             log.info(
                 f"{r.get('id').ljust(23)} | {r.get('catalog').ljust(20)} | {str(knackly_last_modified).ljust(26)} | {str(mongo_last_modified).ljust(26)} | {knackly_last_modified - mongo_last_modified}"
             )
-    log.info(
-        f"{modified_document_count} out of the {len(matching_ids)} matching documents were replaced with their latest versions."
-    )
+    log.info(f"{modified_document_count} out of the {len(matching_ids)} matching documents were replaced with their latest versions.")
 
 
 if __name__ == "__main__":
