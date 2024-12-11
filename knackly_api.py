@@ -1,5 +1,6 @@
-import requests
 import json
+
+import requests
 
 
 def guess_responsible_app(apps: list) -> str:
@@ -11,9 +12,10 @@ def guess_responsible_app(apps: list) -> str:
     Returns:
         str: The name
     """
-    filtered_apps = [
-        (app["name"], app["lastRun"]) for app in apps if app["status"] == "Ok"
-    ]
+    if len(apps) == 0:
+        return None
+
+    filtered_apps = [(app["name"], app["lastRun"]) for app in apps if app["status"] == "Ok"]
     filtered_apps.sort(key=lambda x: x[1], reverse=True)
     return filtered_apps[0][0]
 
@@ -24,9 +26,7 @@ class KnacklyAPI:
         self.secret = secret
         self.tenancy = tenancy
         self.base_url = f"https://api.knackly.io/{tenancy}/api/v1"
-        self.authorization_header = {
-            "Authorization": f"Bearer {self.get_access_token() }"
-        }
+        self.authorization_header = {"Authorization": f"Bearer {self.get_access_token() }"}
         print("Successfully connected to Knackly.")
 
     def get_access_token(self) -> str:
@@ -118,9 +118,7 @@ class KnacklyAPI:
         url = f"{self.base_url}/catalogs/{catalog}/items/{record_id}"
         r = requests.get(url, headers=self.authorization_header)
         if r.status_code == 400 or r.status_code == 403:
-            raise RuntimeError(
-                f"{r.status_code}: something went wrong while trying to get {record_id} in {catalog}: {r.text}"
-            )
+            raise RuntimeError(f"{r.status_code}: something went wrong while trying to get {record_id} in {catalog}: {r.text}")
         return r.json()
 
     def pretty_print_request_details(self, req: requests.Request) -> None:

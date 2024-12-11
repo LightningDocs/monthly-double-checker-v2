@@ -1,4 +1,5 @@
-from datetime import datetime, UTC
+from datetime import UTC, datetime
+
 from pymongo.collection import Collection
 
 from knackly_api import guess_responsible_app
@@ -35,7 +36,11 @@ def format_document(record_details: dict, catalog: str) -> dict:
     }
 
     # Come up with an educated guess for what the responsible_app should be
-    responsible_app = guess_responsible_app(record_details["apps"])
+    if len(record_details["apps"]) > 0:
+        responsible_app = guess_responsible_app(record_details["apps"])
+    else:
+        responsible_app = None
+        print(f"somehow this record: {record_details.get('id')} in the {catalog} catalog did not have any apps on it???")
 
     # Inject the responsible_app into the record details,
     # and then inject the record_details into the timeline array.
@@ -67,13 +72,9 @@ def add_to_timeline(
     record_details["responsible_app"] = responsible_app
 
     # If a document with the provided record_id cannot be found, throw an error
-    result = col.find_one_and_update(
-        {"record_id": record_id}, {"$push": {"timeline": record_details}}
-    )
+    result = col.find_one_and_update({"record_id": record_id}, {"$push": {"timeline": record_details}})
     if not result:
-        raise ReferenceError(
-            f"could not find a document in {col.full_name} with the record id: {record_id}"
-        )
+        raise ReferenceError(f"could not find a document in {col.full_name} with the record id: {record_id}")
 
 
 def update_internally_modified(col: Collection, record_id: str) -> None:
@@ -83,13 +84,16 @@ def update_internally_modified(col: Collection, record_id: str) -> None:
         col (Collection): The pymongo collection object
         record_id (str): The id of the particular record
     """
-    result = col.find_one_and_update(
-        {"record_id": record_id}, {"$currentDate": {"internally_modified": True}}
-    )
+    result = col.find_one_and_update({"record_id": record_id}, {"$currentDate": {"internally_modified": True}})
     if not result:
-        raise ReferenceError(
-            f"could not find a document in {col.full_name} with the record id: {record_id}"
-        )
+        raise ReferenceError(f"could not find a document in {col.full_name} with the record id: {record_id}")
+
+
+def add_to_billing_array(col: Collection, record_id: str, app_name: str) -> None:
+    new_app_object = {"app": app_name, "billed": None}
+    result = col.find_one_and_update({"record_id": record_id}, {"$push": {"billing": new_app_object}})
+    if not result:
+        raise ReferenceError(f"could not find a document in {col.full_name} with the record id: {record_id}")
 
 
 def main():

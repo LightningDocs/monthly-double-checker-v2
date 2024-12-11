@@ -6,9 +6,9 @@ from dotenv import load_dotenv
 from pymongo import MongoClient
 from tqdm import tqdm
 
-from knackly_api import KnacklyAPI
+from knackly_api import KnacklyAPI, guess_responsible_app
 from logger import initialize_logger
-from mongo_db import add_to_timeline, format_document, update_internally_modified
+from mongo_db import add_to_billing_array, add_to_timeline, format_document, update_internally_modified
 
 
 def parse_arguments() -> argparse.Namespace:
@@ -136,6 +136,11 @@ def main(args: argparse.Namespace):
         if knackly_last_modified > (mongo_last_modified + timedelta(minutes=5)):
             # Modify the document to make it conform to what MongoDB expects.
             record_details = knackly.get_record_details(r.get("id"), catalog=r.get("catalog"))
+            responsible_app = guess_responsible_app(record_details.get("apps"))
+            mongo_apps = [e.get("app") for e in mongo_document.get("billing")]
+            if (responsible_app is not None) and (responsible_app not in mongo_apps):
+                add_to_billing_array(col=collection, record_id=record_details.get("id"), app_name=responsible_app)
+                log.info(f"Added the {responsible_app} app to the billing array for record: {r.get('id')}")
             add_to_timeline(
                 col=collection,
                 record_id=record_details.get("id"),
