@@ -37,10 +37,10 @@ def parse_arguments() -> argparse.Namespace:
         except ValueError:
             parser.error(f"please ensure that the date is in the format YYYY-MM-DD. received: {args.date}")
     else:
-        # If args.date was not provided, default it to be 6am pacific time (14:00 UTC) the day before this program is being ran
+        # If args.date was not provided, default it to be 6:00 UTC the day before this program is being ran
         today = datetime.now(tz=UTC)
-        yesterday_1400 = (today - timedelta(days=1)).replace(hour=14, minute=0, second=0, microsecond=0)
-        args.date = yesterday_1400
+        yesterday_600 = (today - timedelta(days=1)).replace(hour=6, minute=0, second=0, microsecond=0)
+        args.date = yesterday_600
 
     # Once args.date is validated, convert it back into a string
     args.date = datetime.strftime(args.date, "%Y-%m-%dT%H:%M")
