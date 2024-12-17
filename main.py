@@ -37,14 +37,13 @@ def parse_arguments() -> argparse.Namespace:
         except ValueError:
             parser.error(f"please ensure that the date is in the format YYYY-MM-DD. received: {args.date}")
     else:
-        # If args.date was not provided, default it to be the first day of the previous month
-        today = datetime.now(tz=UTC).replace(hour=0, minute=0, second=0, microsecond=0)
-        first_of_the_month = today.replace(day=1)
-        first_of_last_month = (first_of_the_month - timedelta(days=1)).replace(day=1)
-        args.date = first_of_last_month
+        # If args.date was not provided, default it to be 6am pacific time (14:00 UTC) the day before this program is being ran
+        today = datetime.now(tz=UTC)
+        yesterday_1400 = (today - timedelta(days=1)).replace(hour=14, minute=0, second=0, microsecond=0)
+        args.date = yesterday_1400
 
     # Once args.date is validated, convert it back into a string
-    args.date = datetime.strftime(args.date, "%Y-%m-%d")
+    args.date = datetime.strftime(args.date, "%Y-%m-%dT%H:%M")
 
     return args
 
@@ -81,7 +80,7 @@ def main(args: argparse.Namespace):
             catalog=c,
             status="Ok",
             limit=1000,
-            last_modified={"c": "after", "v": f"{args.date}T00:00"},
+            last_modified={"c": "after", "v": f"{args.date}"},
         )
 
         # Break out of this iteration if there weren't any records found matching the various filters.
