@@ -23,7 +23,7 @@ def parse_arguments() -> argparse.Namespace:
         parser.add_argument(
             "-d",
             "--date",
-            help="specify a date in the format `YYYY-MM-DD`. Any records with a lastModified date greater than or equal to this date will be what is searched. Defaults to the first of the previous month (using UTC time). For example, if this script is ran on 2024-04-12, the date argument will be 2024-03-01",
+            help="specify a date in the format `YYYY-MM-DD`. Any records with a lastModified date greater than or equal to this date will be what is searched. Defaults to 6:00 UTC the day before this program is being ran. For example, if this script is ran on 2024-04-12, the date argument will be 2024-04-11",
         )
         return parser
 
@@ -49,6 +49,9 @@ def parse_arguments() -> argparse.Namespace:
 
 
 def main(args: argparse.Namespace):
+    now = datetime.now(tz=UTC)
+    lm = datetime.strptime(args.date, "%Y-%m-%dT%H:%M").replace(tzinfo=UTC)
+    print(f"Now = {now.strftime('%Y-%m-%dT%H:%M')}. Searching for Knackly records last modified after {args.date}, which was {now - lm} ago.")
     log = initialize_logger()
     # Setup API credentials
     load_dotenv()
@@ -62,7 +65,7 @@ def main(args: argparse.Namespace):
     mongo_cluster = os.getenv("MONGO_CLUSTER")
     client = MongoClient(f"mongodb+srv://{mongo_user}:{mongo_pass}@{mongo_cluster}/?retryWrites=true&w=majority")
     db = client["LightningDocs"]
-    collection = db["rob_test_Records"]
+    collection = db["real_Records"]
 
     # Get a list of all catalogs available to this API key
     catalog_objects = knackly.get_available_catalogs()
@@ -102,9 +105,9 @@ def main(args: argparse.Namespace):
     # For each non-matching id: add it to mongodb
     log.debug(f"Adding {len(non_matching_ids)} new documents to MongoDB...")
     if non_matching_ids:
-        log.info(f"{'-'*63}")
+        log.info(f"{'-' * 63}")
         log.info(f"{'Record id'.ljust(23)} | {'Catalog'.ljust(20)} | Created Date")
-        log.info(f"{'-'*63}")
+        log.info(f"{'-' * 63}")
         for id in tqdm(non_matching_ids):
             catalog = record_id_map[id].get("catalog")
 
@@ -139,7 +142,7 @@ def main(args: argparse.Namespace):
             mongo_apps = [e.get("app") for e in mongo_document.get("billing")]
             if (responsible_app is not None) and (responsible_app not in mongo_apps):
                 add_to_billing_array(col=collection, record_id=record_details.get("id"), app_name=responsible_app)
-                log.info(f"Added the {responsible_app} app to the billing array for record: {r.get('id')}")
+                log.info(f"Added the {responsible_app} app to the billing array for record: {r.get('id')} ({mongo_apps})")
             add_to_timeline(
                 col=collection,
                 record_id=record_details.get("id"),
@@ -152,11 +155,11 @@ def main(args: argparse.Namespace):
             # Log the heading information for this section
             if not heading_already_printed:
                 heading_already_printed = True
-                log.info(f"{'-'*117}")
+                log.info(f"{'-' * 117}")
                 log.info(
                     f"{str('Record id').ljust(23)} | {str('Catalog').ljust(20)} | {'Knackly last modified'.ljust(26)} | {'Mongo last modified'.ljust(26)} | Difference"
                 )
-                log.info(f"{'-'*117}")
+                log.info(f"{'-' * 117}")
             log.info(
                 f"{r.get('id').ljust(23)} | {r.get('catalog').ljust(20)} | {str(knackly_last_modified).ljust(26)} | {str(mongo_last_modified).ljust(26)} | {knackly_last_modified - mongo_last_modified}"
             )
@@ -165,4 +168,6 @@ def main(args: argparse.Namespace):
 
 if __name__ == "__main__":
     args = parse_arguments()
+    start_time = datetime.now()
     main(args)
+    print(f"Script took roughly {datetime.now() - start_time} to complete.")
