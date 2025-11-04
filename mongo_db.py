@@ -32,7 +32,7 @@ def format_document(record_details: dict, catalog: str) -> dict:
         "timeline": [],
         "billing": [],
         "record_id": record_details.get("id"),
-        "internally_modified": datetime.now(UTC),
+        "internally_modified": datetime.fromisoformat(record_details.get("lastModified").replace("Z", "+00:00")),
     }
 
     # Come up with an educated guess for what the responsible_app should be
@@ -77,14 +77,15 @@ def add_to_timeline(
         raise ReferenceError(f"could not find a document in {col.full_name} with the record id: {record_id}")
 
 
-def update_internally_modified(col: Collection, record_id: str) -> None:
+def update_internally_modified(col: Collection, record_id: str, new_time: datetime) -> None:
     """Updates the internally modified field of a record
 
     Args:
         col (Collection): The pymongo collection object
         record_id (str): The id of the particular record
+        new_time (datetime): The datetime to set for the 'internally_modified' key
     """
-    result = col.find_one_and_update({"record_id": record_id}, {"$currentDate": {"internally_modified": True}})
+    result = col.find_one_and_update({"record_id": record_id}, {"$set": {"internally_modified": new_time}})
     if not result:
         raise ReferenceError(f"could not find a document in {col.full_name} with the record id: {record_id}")
 

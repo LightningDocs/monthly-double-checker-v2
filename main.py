@@ -1,5 +1,6 @@
 import argparse
 import os
+import time
 from datetime import UTC, datetime, timedelta
 
 from dotenv import load_dotenv
@@ -95,6 +96,8 @@ def main(args: argparse.Namespace):
             r.update({"catalog": c})
         record_id_map.update({r["id"]: r for r in records if "id" in r})
 
+        time.sleep(1)
+
     # Using the record_id_map, create a subset for id's already in mongodb and a subset for id's not in mongodb.
     record_ids = list(record_id_map.keys())
     matching_docs = collection.find(filter={"record_id": {"$in": record_ids}}, projection=["record_id"])
@@ -121,6 +124,8 @@ def main(args: argparse.Namespace):
             result = collection.insert_one(document)
             created_date = record_id_map[id].get("created")
             log.info(f"{str(id).ljust(23)} | {str(catalog).ljust(20)} | {created_date}")
+
+            time.sleep(1)
     log.info(f"{len(non_matching_ids)} id's found in Knackly that don't currently exist in MongoDB.")
 
     # For each matching id: check if it was modified past what we have stored in mongodb
@@ -148,7 +153,8 @@ def main(args: argparse.Namespace):
                 record_id=record_details.get("id"),
                 record_details=record_details,
             )
-            update_internally_modified(col=collection, record_id=record_details.get("id"))
+            new_internally_modified = datetime.fromisoformat(record_details.get("lastModified").replace("Z", "+00:00"))
+            update_internally_modified(col=collection, record_id=record_details.get("id"), new_time=new_internally_modified)
 
             modified_document_count += 1
 
@@ -163,6 +169,8 @@ def main(args: argparse.Namespace):
             log.info(
                 f"{r.get('id').ljust(23)} | {r.get('catalog').ljust(20)} | {str(knackly_last_modified).ljust(26)} | {str(mongo_last_modified).ljust(26)} | {knackly_last_modified - mongo_last_modified}"
             )
+
+            time.sleep(1)
     log.info(f"{modified_document_count} out of the {len(matching_ids)} matching documents were replaced with their latest versions.")
 
 
