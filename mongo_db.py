@@ -33,6 +33,7 @@ def format_document(record_details: dict, catalog: str) -> dict:
         "billing": [],
         "record_id": record_details.get("id"),
         "internally_modified": datetime.fromisoformat(record_details.get("lastModified").replace("Z", "+00:00")),
+        "mongodb_modified": datetime.now(tz=UTC),
     }
 
     # Come up with an educated guess for what the responsible_app should be
@@ -86,6 +87,18 @@ def update_internally_modified(col: Collection, record_id: str, new_time: dateti
         new_time (datetime): The datetime to set for the 'internally_modified' key
     """
     result = col.find_one_and_update({"record_id": record_id}, {"$set": {"internally_modified": new_time}})
+    if not result:
+        raise ReferenceError(f"could not find a document in {col.full_name} with the record id: {record_id}")
+
+
+def update_mongodb_modified(col: Collection, record_id: str) -> None:
+    """Updates (or adds) the mongodb_modified field of a record
+
+    Args:
+        col (Collection): The pymongo collection object
+        record_id (str): The id of the particular record
+    """
+    result = col.find_one_and_update({"record_id": record_id}, {"$set": {"mongodb_modified": datetime.now(tz=UTC)}})
     if not result:
         raise ReferenceError(f"could not find a document in {col.full_name} with the record id: {record_id}")
 

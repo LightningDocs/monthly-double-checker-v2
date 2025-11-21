@@ -9,7 +9,7 @@ from tqdm import tqdm
 
 from knackly_api import KnacklyAPI, guess_responsible_app
 from logger import initialize_logger
-from mongo_db import add_to_billing_array, add_to_timeline, format_document, update_internally_modified
+from mongo_db import add_to_billing_array, add_to_timeline, format_document, update_internally_modified, update_mongodb_modified
 
 
 def parse_arguments() -> argparse.Namespace:
@@ -155,6 +155,7 @@ def main(args: argparse.Namespace):
             )
             new_internally_modified = datetime.fromisoformat(record_details.get("lastModified").replace("Z", "+00:00"))
             update_internally_modified(col=collection, record_id=record_details.get("id"), new_time=new_internally_modified)
+            update_mongodb_modified(col=collection, record_id=record_details.get("id"))
 
             modified_document_count += 1
 
